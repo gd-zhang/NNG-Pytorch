@@ -139,7 +139,8 @@ class KronCurvature(Curvature):
     def _compute_curv(self):
         # average over all devices
         self._data[0].copy_(torch.cuda.comm.reduce_add(self._A)).div_(len(self._A))
-        self._data[1].copy_(torch.cuda.comm.reduce_add(self._G)).div_(len(self._G))
+        # TODO (GD): double check the following
+        self._data[1].copy_(torch.cuda.comm.reduce_add(self._G)).mul_(len(self._G))
         self._A = []
         self._G = []
 

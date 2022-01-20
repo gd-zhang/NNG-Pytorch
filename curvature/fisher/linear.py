@@ -34,12 +34,10 @@ class KronLinear(KronCurvature):
     def update_forward(self, data_input):
         if self.bias is not None:
             data_input = torch.cat([data_input, data_input.new(data_input.size(0), 1).fill_(1)], 1)
-        # self._data[0].add_(data_input.t() @ (data_input / self.batch_size))
         batch_size = data_input.size(0)
         self._A.append(data_input.t() @ (data_input / batch_size))
 
     def update_backward(self, grad_output):
-        # since we use average loss, rescale the gradient
+        # note that this batch_size is for a single node (may not be the real bs with multi-gpu)
         batch_size = grad_output.size(0)
-        # self._data[1].add_(grad_output.t() @ (grad_output / self.batch_size))
         self._G.append(grad_output.t() @ (grad_output * batch_size))
