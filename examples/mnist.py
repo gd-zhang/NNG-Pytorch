@@ -62,7 +62,7 @@ def test(model, device, test_loader):
 def main():
     # Training settings
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-    parser.add_argument('--batch-size', type=int, default=1000, metavar='N',
+    parser.add_argument('--batch-size', type=int, default=500, metavar='N',
                         help='input batch size for training (default: 256)')
     parser.add_argument('--epochs', type=int, default=14, metavar='N',
                         help='number of epochs to train (default: 14)')
@@ -84,7 +84,7 @@ def main():
                                              test_batch_size=250)
 
     model = Net().to(device)
-    optimizer = NKFAC(model, dataset_size=len(trainloader.dataset), lr=args.lr)
+    optimizer = NKFAC(model, dataset_size=len(trainloader.dataset), lr=args.lr, precision=10)
     model = torch.nn.DataParallel(model)
 
     for epoch in range(1, args.epochs + 1):

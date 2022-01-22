@@ -1,0 +1,50 @@
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    cli_version: 0.10.20
+    code_path: code/examples/cifar.py
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    python_version: 3.6.12
+    t:
+      1:
+      - 1
+      2:
+      - 1
+      4: 3.6.12
+      5: 0.10.20
+      8:
+      - 5
+arch:
+  desc: null
+  value: vgg16_cifar
+batch_size:
+  desc: null
+  value: 500
+ckpt_dir:
+  desc: null
+  value: /checkpoint/gdzhang/6002846
+epochs:
+  desc: null
+  value: 100
+kl_lam:
+  desc: null
+  value: 0.05
+lr:
+  desc: null
+  value: 0.03
+no_cuda:
+  desc: null
+  value: false
+optim:
+  desc: null
+  value: kfac
+precision:
+  desc: null
+  value: 10.0
+seed:
+  desc: null
+  value: 1
