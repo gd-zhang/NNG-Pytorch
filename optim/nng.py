@@ -1,6 +1,6 @@
 from collections import defaultdict
 import math
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,19 +12,18 @@ curv_names = [name for name in curvmat.__dict__ if not name.startswith('__') and
 class NoisyNaturalGradient(Optimizer):
 
     def __init__(self, model: nn.Module, dataset_size: int, curv_shapes: dict, curv_kwargs: dict,
-                 lr=0.01, momentum=0.9, precision=20., kl_lam=1., seed=1, inv_T=1, kl_clip=1e-4):
+                 lr=0.01, momentum=0.9, precision=None, kl_lam=1., kl_clip=1e-4, seed=1, cov_T=1, inv_T=1):
 
         self.model = model
-        sam_damping = precision * kl_lam / dataset_size
         scale = math.sqrt(kl_lam / dataset_size)
 
         defaults = {'lr': lr, 'momentum': momentum, 'scale': scale, 'seed_base': seed}
-        curv_kwargs['sam_damping'] = sam_damping
         defaults.update(curv_kwargs)
         self.defaults = defaults
         self.state = defaultdict(dict)
         self.optim_state = {'step': 0}
         self.kl_clip = kl_clip
+        self.cov_T = cov_T
         self.inv_T = inv_T
 
         self.param_groups = []
@@ -41,7 +40,10 @@ class NoisyNaturalGradient(Optimizer):
             if curv_class not in curv_names:
                 curvature = None
             else:
-                curvature = curvmat.__dict__[curv_class](module, **curv_kwargs)
+                if precision == 0.0:
+                    precision = np.prod(module.weight.shape[1:]) / 2
+                sam_damping = precision * kl_lam / dataset_size
+                curvature = curvmat.__dict__[curv_class](module, sam_damping=sam_damping, **curv_kwargs)
 
             group = {
                 'params': params,
@@ -53,7 +55,7 @@ class NoisyNaturalGradient(Optimizer):
 
         for group in self.param_groups:
             group['mean'] = [p.data.detach().clone() for p in group['params']]
-            self.init_buffer(group['mean'])
+            self.init_buffer(group['params'])
 
             if group['curv'] is not None:
                 curv = group['curv']
@@ -99,7 +101,7 @@ class NoisyNaturalGradient(Optimizer):
         for group in self.param_groups:
             params, mean = group['params'], group['mean']
             curv = group['curv']
-            if curv is not None:
+            if curv is not None and group['scale'] > 0:
                 # sample from posterior
                 curv.sample_params(params, mean, group['scale'])
             else:
@@ -122,7 +124,9 @@ class NoisyNaturalGradient(Optimizer):
         self.sample_params()
 
         # forward and backward
-        loss, output = closure()
+        update_est = self.optim_state['step'] % self.cov_T == 0
+        update_inv_cov = self.optim_state['step'] % self.inv_T == 0
+        loss, output = closure(update_est)
         self.optim_state['step'] += 1
 
         # compute preconditioned update for mean parameters and also update curvature
@@ -132,7 +136,7 @@ class NoisyNaturalGradient(Optimizer):
             # update covariance
             mean, curv = group['mean'], group['curv']
             if curv is not None:
-                curv.update(update_inv_cov=(self.optim_state['step'] % self.inv_T == 1))
+                curv.update(update_est=update_est, update_inv_cov=update_inv_cov)
                 curv.preconditioning(mean)
 
         # kl clipping
@@ -141,16 +145,20 @@ class NoisyNaturalGradient(Optimizer):
         # take the update for mean
         for group in self.param_groups:
             # update mean
-            self.update(group, target='mean')
+            self.update(group)
 
+            # copy mean to param
+            self._copy_mean_to_params()
+
+        return loss
+
+    def _copy_mean_to_params(self):
+        for group in self.param_groups:
             # copy mean to param
             mean = group['mean']
             params = group['params']
             for p, m in zip(params, mean):
                 p.data.copy_(m.data)
-                p.grad.copy_(m.grad)
-
-        return loss
 
     def _preprocess(self, group):
         means = group['mean']
@@ -158,7 +166,8 @@ class NoisyNaturalGradient(Optimizer):
 
         for m, p in zip(means, params):
             m.grad = p.grad.clone()
-            m.grad.data.add_(group['sam_damping'], p.data)
+            m.grad.data.add_(group['curv'].sam_damping, p.data)
+            p.grad.data.add_(group['curv'].sam_damping, p.data)
 
     def _kl_clipping(self):
         kl_dist = 0
@@ -168,7 +177,7 @@ class NoisyNaturalGradient(Optimizer):
 
             lr = group['lr']
             for m, p in zip(means, params):
-                kl_dist += (lr ** 2 * m.grad.data * (p.grad.data + group['sam_damping'] * p.data)).sum().item()
+                kl_dist += (lr ** 2 * m.grad.data * p.grad.data).sum().item()
         nu = min(1.0, math.sqrt(self.kl_clip / kl_dist))
 
         for group in self.param_groups:
@@ -176,7 +185,7 @@ class NoisyNaturalGradient(Optimizer):
             for m in means:
                 m.grad.data.mul_(nu)
 
-    def update(self, group, target='params'):
+    def update(self, group):
         def apply_momentum(p, grad):
             momentum = group['momentum']
             if momentum != 0:
@@ -185,13 +194,14 @@ class NoisyNaturalGradient(Optimizer):
                 grad = buf
             return grad
 
-        params = group[target]
-        for p in params:
-            grad = p.grad
+        params = group['params']
+        means = group['mean']
+        for m, p in zip(means, params):
+            grad = m.grad
             if grad is None:
                 continue
-            new_grad = apply_momentum(p, grad)
-            p.data.add_(-group['lr'], new_grad)
+            new_grad = apply_momentum(p, grad) # momentum_buffer is under params
+            m.data.add_(-group['lr'], new_grad)
 
 
 class NKFAC(NoisyNaturalGradient):
@@ -202,8 +212,9 @@ class NKFAC(NoisyNaturalGradient):
                                   'Linear': 'Kron',
                                   'Conv2d': 'Kron',
                               },
-                              curv_kwargs={'ema_decay': 0.98, 'damping': 1e-3},
-                              inv_T=20,
+                              curv_kwargs={'ema_decay': 0.99, 'damping': 1e-3},
+                              cov_T=5,
+                              inv_T=100,
                               momentum=0.9)
 
         default_kwargs.update(kwargs)

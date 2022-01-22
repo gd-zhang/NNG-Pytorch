@@ -58,25 +58,34 @@ def get_closure(optimizer, model, data, target, approx_type='mc'):
             if group['curv'] is not None:
                 group['curv'].set_acc_stats(True)
 
-    def closure():
+    def closure(acc_stats=True):
 
-        turn_on_acc_stats()
-        optimizer.zero_grad()
-        output = model(data)
-        prob = F.softmax(output, dim=1)
+        if acc_stats:
+            turn_on_acc_stats()
+            optimizer.zero_grad()
+            output = model(data)
+            prob = F.softmax(output, dim=1)
 
-        turn_off_param_grad()
-        if approx_type == 'mc':
-            dist = torch.distributions.Categorical(prob)
-            target_ = dist.sample((1, ))[0]
+            turn_off_param_grad()
+            if approx_type == 'mc':
+                with torch.no_grad():
+                    try:
+                        dist = torch.distributions.Categorical(prob)
+                        target_ = dist.sample((1, ))[0]
+                    except:
+                        import pdb
+                        pdb.set_trace()
+            else:
+                target_ = target
+
+            loss = F.cross_entropy(output, target_)
+            loss.backward(retain_graph=True)
+
+            turn_off_acc_stats()
+            turn_on_param_grad()
         else:
-            target_ = target
-
-        loss = F.cross_entropy(output, target_)
-        loss.backward(retain_graph=True)
-
-        turn_off_acc_stats()
-        turn_on_param_grad()
+            optimizer.zero_grad()
+            output = model(data)
 
         loss = F.cross_entropy(output, target)
         loss.backward()

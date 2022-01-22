@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from curvature.curvature import DiagCurvature, KronCurvature
+from utils.kfac_utils import try_contiguous
 
 
 class KronConv2d(KronCurvature):
@@ -24,14 +25,14 @@ class KronConv2d(KronCurvature):
         input_patches = F.unfold(data_input, kernel_size=conv.kernel_size, stride=conv.stride,
                                  padding=conv.padding, dilation=conv.dilation)
         bs, in_dim, spatial_locations = input_patches.size()
-        input_patches = input_patches.transpose(1, 2).view(-1, in_dim)
+        input_patches = input_patches.transpose(1, 2).reshape(-1, in_dim).div(spatial_locations)
 
         if self.bias is not None:
             input_patches = torch.cat([input_patches, input_patches.new(input_patches.size(0), 1).fill_(1)], 1)
-        self._A.append(input_patches.t() @ (input_patches / input_patches.size(0)))
+        self._A.append(input_patches.t() @ (input_patches / bs))
 
     def update_backward(self, grad_output):
         bs, c, h, w = grad_output.shape
-        grad_output *= bs # note that bs here is only for a single node
-        grad_output = grad_output.transpose(1, 2).transpose(2, 3).view(-1, c) # (bs * h * w) * c
-        self._G.append(grad_output.t() @ (grad_output / bs))
+        grad_output = grad_output * bs * h * w # note that bs here is only for a single node
+        grad_output = grad_output.transpose(1, 2).transpose(2, 3).reshape(-1, c) # (bs * h * w) * c
+        self._G.append(grad_output.t() @ (grad_output / grad_output.size(0)))

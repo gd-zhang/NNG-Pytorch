@@ -10,7 +10,7 @@ class Curvature(object):
 
         self._module = module
         self._ema_decay = ema_decay
-        self._damping = damping
+        self._damping = max(damping, sam_damping)
         self._sam_damping = sam_damping
 
         self._acc_stats = False
@@ -35,6 +35,10 @@ class Curvature(object):
         return self._data
 
     @property
+    def sam_damping(self):
+        return self._sam_damping
+
+    @property
     def device(self):
         return next(self._module.parameters()).device
 
@@ -55,7 +59,7 @@ class Curvature(object):
 
     def backward_process(self, module, grad_input, grad_output):
         if self._acc_stats:
-            grad_output = grad_output[0]
+            grad_output = grad_output[0].data
             # setattr(module, "grad_output", grad_output)
             self.update_backward(grad_output)
 
@@ -151,8 +155,8 @@ class KronCurvature(Curvature):
         self._eigval = []
         self._eigvec = []
         for est in self._est:
-            e, v = torch.symeig(est, eigenvectors=True)
-            self._eigval.append(e)
+            e, v = torch.linalg.eigh(est)
+            self._eigval.append(e.clamp(min=0.0))
             self._eigvec.append(v)
 
     def preconditioning(self, params):
@@ -170,7 +174,7 @@ class KronCurvature(Curvature):
 
     def sample_params(self, params, means, scale):
         noise = torch.randn([self._eigvec[1].shape[0], self._eigvec[0].shape[0]], device=self.device)
-        noise = self._eigvec[1].t() @ noise @ self._eigvec[0]
+        # noise = self._eigvec[1].t() @ noise @ self._eigvec[0] # this is not necessary for sampling
         noise = noise / (self._eigval[1].unsqueeze(1) * self._eigval[0].unsqueeze(0) + self._sam_damping).sqrt()
         noise = self._eigvec[1] @ noise @ self._eigvec[0].t()
         noise = noise * scale

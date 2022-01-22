@@ -48,7 +48,7 @@ def get_transforms(dataset):
     return transform_train, transform_test
 
 
-def get_dataloader(dataset, train_batch_size, test_batch_size, num_workers=2, root='../data'):
+def get_dataloader(dataset, train_batch_size, test_batch_size, num_workers=4, root='../data'):
     transform_train, transform_test = get_transforms(dataset)
     trainset, testset = None, None
     if dataset == 'cifar10':
