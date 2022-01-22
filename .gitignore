@@ -126,3 +126,4 @@ test/checkpoint/
 old_configs/
 old_configs2/
 configs/
+wandb/
