@@ -39,6 +39,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
 def test(model, optimizer, device, test_loader, mc_sample=1):
     model.eval()
     correct = 0
+    confidence = 0
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
@@ -53,12 +54,20 @@ def test(model, optimizer, device, test_loader, mc_sample=1):
                     prob += F.softmax(output)
             prob /= mc_sample
             pred = prob.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            confidence += torch.gather(prob, dim=1, index=pred).sum().item()
             correct += pred.eq(target.view_as(pred)).sum().item()
 
     acc = 100. * correct / len(test_loader.dataset)
+    conf = 100. * confidence / len(test_loader.dataset)
     print('Test set: Accuracy: {}/{} ({:.0f}%)\n'.format(
         correct, len(test_loader.dataset), acc))
-    return acc
+    return acc, conf
+
+
+def adjust_hparams(optimizer, epoch, schedule):
+    if epoch in schedule:
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = param_group['lr'] * 0.1
 
 
 def main():
@@ -70,6 +79,10 @@ def main():
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate (default: 1.0)')
+    parser.add_argument('--schedule', type=int, nargs='+', default=[40, 80],
+                        help='Decrease learning rate at these epochs.')
+    parser.add_argument('--ema-decay', type=float, default=0.99, metavar='EMA',
+                        help='ema decay factor for cov update (default: 0.99)')
     parser.add_argument('--kl-lam', type=float, default=1.0, metavar='LAM',
                         help='kl weighting factor (default: 1.0)')
     parser.add_argument('--precision', type=float, default=0.0, metavar='P',
@@ -87,9 +100,10 @@ def main():
 
     args = parser.parse_args()
     state = {k: v for k, v in args._get_kwargs()}
-    wandb.init(project='NNG-CIFAR', config=state, save_code=True,
-               name='%s_%s_lr%.4f_lam%.2f_prec%.1f' % (args.arch, args.optim,
-                                                       args.lr, args.kl_lam, args.precision))
+    if args.ckpt_dir is not None:
+        wandb.init(project='NNG-CIFAR', config=state, save_code=True,
+                   name='%s_%s_lr%.4f_ema%.2f_lam%.2f_prec%.1f' % (args.arch, args.optim, args.lr,
+                                                                   args.ema_decay, args.kl_lam, args.precision))
 
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     torch.manual_seed(args.seed)
@@ -98,18 +112,18 @@ def main():
     # init dataloader
     trainloader, testloader = get_dataloader(dataset="cifar10",
                                              train_batch_size=args.batch_size,
-                                             test_batch_size=500)
+                                             test_batch_size=1000)
 
     model = models.__dict__[args.arch]()
     model = model.to(device)
     if args.optim == "kfac":
-        optimizer = NKFAC(model, dataset_size=len(trainloader.dataset), lr=args.lr,
+        optimizer = NKFAC(model, dataset_size=len(trainloader.dataset), lr=args.lr, ema_decay=args.ema_decay,
                           kl_clip=1e-3, kl_lam=args.kl_lam, precision=args.precision)
     else:
-        optimizer = NAdam(model, dataset_size=len(trainloader.dataset), lr=args.lr,
+        optimizer = NAdam(model, dataset_size=len(trainloader.dataset), lr=args.lr, ema_decay=args.ema_decay,
                           kl_clip=1e-3, kl_lam=args.kl_lam, precision=args.precision)
     model = torch.nn.DataParallel(model)
-    scheduler = StepLR(optimizer, step_size=1, gamma=0.95)
+    # scheduler = StepLR(optimizer, step_size=1, gamma=0.95)
 
     if args.ckpt_dir is not None:
         checkpoint = latest_checkpoint_load(args.ckpt_dir)
@@ -118,7 +132,7 @@ def main():
     if checkpoint is not None:
         model.load_state_dict(checkpoint[0]['state_dict'])
         optimizer.load_state_dict(checkpoint[0]['optimizer'])
-        scheduler.load_state_dict(checkpoint[0]['scheduler'])
+        # scheduler.load_state_dict(checkpoint[0]['scheduler'])
         start_epoch = checkpoint[0]['epoch']
         print("Loaded a checkpoint\n")
     else:
@@ -131,16 +145,17 @@ def main():
         print("Epoch: {} | Time elapsed: {:.1f}".format(epoch, train_time))
 
         # optimizer.sample_params()
-        train_acc = test(model, optimizer, device, trainloader, mc_sample=1)
-        test_acc = test(model, optimizer, device, testloader, mc_sample=10)
-        scheduler.step()
-
-        wandb.log({'train-acc': train_acc, 'test-acc': test_acc}, step=epoch)
+        train_acc, train_conf = test(model, optimizer, device, trainloader, mc_sample=10)
+        test_acc, test_conf = test(model, optimizer, device, testloader, mc_sample=10)
+        # scheduler.step()
+        adjust_hparams(optimizer, epoch, args.schedule)
 
         if args.ckpt_dir is not None:
+            wandb.log({'train-acc': train_acc, 'train-conf': train_conf,
+                       'test-acc': test_acc, 'test-conf': test_conf}, step=epoch)
             checkpoint_name = checkpoint_save({'state_dict': model.state_dict(),
                                                'optimizer': optimizer.state_dict(),
-                                               'scheduler': scheduler.state_dict(),
+                                               # 'scheduler': scheduler.state_dict(),
                                                'epoch': epoch + 1}, args.ckpt_dir)
 
 if __name__ == '__main__':

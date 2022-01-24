@@ -5,11 +5,9 @@ from utils.kfac_utils import update_running_stats
 
 
 class Curvature(object):
-    def __init__(self, module, ema_decay=1.0, damping=1e-3, sam_damping=1e-3):
-        assert 0.0 <= ema_decay <= 1.0, "Invalid ema_decay value"
+    def __init__(self, module, damping=1e-3, sam_damping=1e-3):
 
         self._module = module
-        self._ema_decay = ema_decay
         self._damping = max(damping, sam_damping)
         self._sam_damping = sam_damping
 
@@ -72,11 +70,11 @@ class Curvature(object):
     def _compute_curv(self):
         NotImplementedError
 
-    def update(self, update_est=True, update_inv_cov=False):
+    def update(self, ema_decay, update_est=True, update_inv_cov=False):
         if update_est:
             self._compute_curv()
             for est, data in zip(self._est, self._data):
-                update_running_stats(data, est, self._ema_decay)
+                update_running_stats(data, est, ema_decay)
 
         if update_inv_cov:
             self._update_inv_cov()

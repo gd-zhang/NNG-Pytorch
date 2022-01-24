@@ -11,13 +11,13 @@ curv_names = [name for name in curvmat.__dict__ if not name.startswith('__') and
 
 class NoisyNaturalGradient(Optimizer):
 
-    def __init__(self, model: nn.Module, dataset_size: int, curv_shapes: dict, curv_kwargs: dict,
-                 lr=0.01, momentum=0.9, precision=None, kl_lam=1., kl_clip=1e-4, seed=1, cov_T=1, inv_T=1):
+    def __init__(self, model: nn.Module, dataset_size: int, curv_shapes: dict, curv_kwargs: dict, lr=0.01,
+                 momentum=0.9, precision=None, ema_decay=0.99, kl_lam=1., kl_clip=1e-4, seed=1, cov_T=1, inv_T=1):
 
         self.model = model
         scale = math.sqrt(kl_lam / dataset_size)
 
-        defaults = {'lr': lr, 'momentum': momentum, 'scale': scale, 'seed_base': seed}
+        defaults = {'lr': lr, 'momentum': momentum, 'ema_decay': ema_decay, 'scale': scale, 'seed_base': seed}
         defaults.update(curv_kwargs)
         self.defaults = defaults
         self.state = defaultdict(dict)
@@ -60,7 +60,7 @@ class NoisyNaturalGradient(Optimizer):
             if group['curv'] is not None:
                 curv = group['curv']
                 curv.init(1.0)
-                curv.update(update_est=False, update_inv_cov=True)
+                curv.update(group['ema_decay'], update_est=False, update_inv_cov=True)
 
     def get_curv_class(self, module):
         module_name = module.__class__.__name__
@@ -136,7 +136,7 @@ class NoisyNaturalGradient(Optimizer):
             # update covariance
             mean, curv = group['mean'], group['curv']
             if curv is not None:
-                curv.update(update_est=update_est, update_inv_cov=update_inv_cov)
+                curv.update(group['ema_decay'], update_est=update_est, update_inv_cov=update_inv_cov)
                 curv.preconditioning(mean)
 
         # kl clipping
@@ -212,8 +212,9 @@ class NKFAC(NoisyNaturalGradient):
                                   'Linear': 'Kron',
                                   'Conv2d': 'Kron',
                               },
-                              curv_kwargs={'ema_decay': 0.99, 'damping': 1e-3},
-                              cov_T=5,
+                              curv_kwargs={'damping': 1e-3},
+                              ema_decay=0.99,
+                              cov_T=10,
                               inv_T=100,
                               momentum=0.9)
 
@@ -230,7 +231,9 @@ class NAdam(NoisyNaturalGradient):
                                   'Linear': 'Diag',
                                   'Conv2d': 'Diag',
                               },
-                              curv_kwargs={'ema_decay': 0.98, 'damping': 1e-3},
+                              curv_kwargs={'damping': 1e-3},
+                              ema_decay=0.99,
+                              cov_T=1,
                               inv_T=1,
                               momentum=0.9)
 
