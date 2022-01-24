@@ -12,14 +12,18 @@ This project uses Python 3.6.0. Before running the code, you have to install
 
 ## Example
 
-- VGG16 (w/o batch norm) on CIFAR10. We used `kl-lam = 0.2` because of the use of data augmentation. You should expect to get 89.5% acc and roughly same confidence.
+VGG16 (w/o batch norm) on CIFAR10. We used `kl-lam = 0.2` because of the use of data augmentation. You should expect to get 89.5% acc and roughly same confidence.
 ```
 python examples/cifar.py --kl-lam 0.2 --lr 0.01 --precision 0.0
 ```
 
-- The MNIST example is just for debugging purpose.
+The MNIST example is just for debugging purpose.
 
-- I'm currently working on extending it to ImageNet.
+## Working in Progress
+
+- ImageNet ResNet50 example
+- Support of Noisy Adam for ConvNets
+- Support of Batch norm (for now, one can just froze the batch norm parameters)
 
 ## Citation
 To cite this work, please use
