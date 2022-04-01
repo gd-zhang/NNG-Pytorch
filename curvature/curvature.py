@@ -14,12 +14,17 @@ class Curvature(object):
         self._acc_stats = False
         self._data = None
         self._est = None
-
-        module.register_forward_hook(self.forward_process)
-        module.register_backward_hook(self.backward_process)
+        self.register_hook()
 
     def set_acc_stats(self, value):
         self._acc_stats = value
+
+    def set_module(self, module):
+        self._module = module
+
+    def register_hook(self):
+        self._module.register_forward_hook(self.forward_process)
+        self._module.register_backward_hook(self.backward_process)
 
     def _get_shape(self):
         NotImplementedError
@@ -133,8 +138,8 @@ class KronCurvature(Curvature):
         self._eigvec = None
 
     def init(self, value):
-        self._est = [torch.eye(s[0], device=self.device).mul(value) for s in self.shape]
-        self._data = [torch.zeros(s, device=self.device).mul(value) for s in self.shape]
+        self._est = [torch.eye(s[0], device=self.device).mul_(value) for s in self.shape]
+        self._data = [torch.zeros(s, device=self.device).mul_(value) for s in self.shape]
         self._A = []
         self._G = []
 

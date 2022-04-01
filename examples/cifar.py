@@ -28,7 +28,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
         data, target = data.to(device), target.to(device)
 
         closure = get_closure(optimizer, model, data, target)
-        loss = optimizer.step(closure=closure)
+        loss, _ = optimizer.step(closure=closure)
 
         if batch_idx % 10 == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
@@ -36,7 +36,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
                 100. * batch_idx / len(train_loader), loss.item()))
 
 
-def test(model, optimizer, device, test_loader, mc_sample=1):
+def test(model, optimizer, device, test_loader, mc_sample=1, mul_factor=1.0):
     model.eval()
     correct = 0
     confidence = 0
@@ -46,7 +46,7 @@ def test(model, optimizer, device, test_loader, mc_sample=1):
 
             prob = None
             for _ in range(mc_sample):
-                optimizer.sample_params()
+                optimizer.sample_params(mul_factor)
                 output = model(data)
                 if prob is None:
                     prob = F.softmax(output)
@@ -79,6 +79,8 @@ def main():
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate (default: 1.0)')
+    parser.add_argument('--wd', '--weight-decay', default=0.0, type=float,
+                        metavar='W', help='weight decay (default: 0.0)')
     parser.add_argument('--schedule', type=int, nargs='+', default=[40, 80],
                         help='Decrease learning rate at these epochs.')
     parser.add_argument('--ema-decay', type=float, default=0.99, metavar='EMA',
@@ -87,6 +89,8 @@ def main():
                         help='kl weighting factor (default: 1.0)')
     parser.add_argument('--precision', type=float, default=0.0, metavar='P',
                         help='prior precision (default: 1.0)')
+    parser.add_argument('--mul-factor', type=float, default=1.0, metavar='M',
+                        help='scaling factor for noise sampling (default: 1.0)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
@@ -102,8 +106,9 @@ def main():
     state = {k: v for k, v in args._get_kwargs()}
     if args.ckpt_dir is not None:
         wandb.init(project='NNG-CIFAR', config=state, save_code=True,
-                   name='%s_%s_lr%.4f_ema%.2f_lam%.2f_prec%.1f' % (args.arch, args.optim, args.lr,
-                                                                   args.ema_decay, args.kl_lam, args.precision))
+                   name='%s_%s_lr%.4f_wd%.5f_ema%.2f_lam%.2f_prec%.1f_mul%.2f' % (
+                       args.arch, args.optim, args.lr, args.wd, args.ema_decay,
+                       args.kl_lam, args.precision, args.mul_factor))
 
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     torch.manual_seed(args.seed)
@@ -117,11 +122,13 @@ def main():
     model = models.__dict__[args.arch]()
     model = model.to(device)
     if args.optim == "kfac":
-        optimizer = NKFAC(model, dataset_size=len(trainloader.dataset), lr=args.lr, ema_decay=args.ema_decay,
-                          kl_clip=1e-3, kl_lam=args.kl_lam, precision=args.precision)
+        optimizer = NKFAC(model, dataset_size=len(trainloader.dataset), lr=args.lr,
+                          weight_decay=args.wd, ema_decay=args.ema_decay, mul_factor=args.mul_factor,
+                          kl_clip=1e-3, kl_lam=args.kl_lam, precision=args.precision, gain=2.0)
     else:
-        optimizer = NAdam(model, dataset_size=len(trainloader.dataset), lr=args.lr, ema_decay=args.ema_decay,
-                          kl_clip=1e-3, kl_lam=args.kl_lam, precision=args.precision)
+        optimizer = NAdam(model, dataset_size=len(trainloader.dataset), lr=args.lr,
+                          weight_decay=args.wd, ema_decay=args.ema_decay, mul_factor=args.mul_factor,
+                          kl_clip=1e-3, kl_lam=args.kl_lam, precision=args.precision, gain=2.0)
     model = torch.nn.DataParallel(model)
     # scheduler = StepLR(optimizer, step_size=1, gamma=0.95)
 
@@ -145,8 +152,8 @@ def main():
         print("Epoch: {} | Time elapsed: {:.1f}".format(epoch, train_time))
 
         # optimizer.sample_params()
-        train_acc, train_conf = test(model, optimizer, device, trainloader, mc_sample=10)
-        test_acc, test_conf = test(model, optimizer, device, testloader, mc_sample=10)
+        train_acc, train_conf = test(model, optimizer, device, trainloader, mc_sample=10, mul_factor=args.mul_factor)
+        test_acc, test_conf = test(model, optimizer, device, testloader, mc_sample=10, mul_factor=args.mul_factor)
         # scheduler.step()
         adjust_hparams(optimizer, epoch, args.schedule)
 

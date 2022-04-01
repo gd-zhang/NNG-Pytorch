@@ -32,7 +32,7 @@ class KronLinear(KronCurvature):
         return p_grad_mat
 
     def update_forward(self, data_input):
-        if self.bias is not None:
+        if self.bias:
             data_input = torch.cat([data_input, data_input.new(data_input.size(0), 1).fill_(1)], 1)
         batch_size = data_input.size(0)
         self._A.append(data_input.t() @ (data_input / batch_size))

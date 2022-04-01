@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 from curvature.curvature import DiagCurvature, KronCurvature
-from utils.kfac_utils import try_contiguous
 
 
 class KronConv2d(KronCurvature):
@@ -27,7 +26,7 @@ class KronConv2d(KronCurvature):
         bs, in_dim, spatial_locations = input_patches.size()
         input_patches = input_patches.transpose(1, 2).reshape(-1, in_dim).div(spatial_locations)
 
-        if self.bias is not None:
+        if self.bias:
             input_patches = torch.cat([input_patches, input_patches.new(input_patches.size(0), 1).fill_(1)], 1)
         self._A.append(input_patches.t() @ (input_patches / bs))
 

@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 
@@ -36,7 +37,9 @@ def update_running_stats(aa, m_aa, stat_decay):
     m_aa *= (1 - stat_decay)
 
 
-def get_closure(optimizer, model, data, target, approx_type='mc'):
+def get_closure(optimizer, model, data, target, criterion=None, approx_type='mc'):
+    if criterion is None:
+        criterion = nn.CrossEntropyLoss().cuda()
 
     def turn_off_param_grad():
         for group in optimizer.param_groups:
@@ -78,7 +81,7 @@ def get_closure(optimizer, model, data, target, approx_type='mc'):
             else:
                 target_ = target
 
-            loss = F.cross_entropy(output, target_)
+            loss = criterion(output, target_)
             loss.backward(retain_graph=True)
 
             turn_off_acc_stats()
@@ -87,7 +90,7 @@ def get_closure(optimizer, model, data, target, approx_type='mc'):
             optimizer.zero_grad()
             output = model(data)
 
-        loss = F.cross_entropy(output, target)
+        loss = criterion(output, target)
         loss.backward()
 
         return loss, output

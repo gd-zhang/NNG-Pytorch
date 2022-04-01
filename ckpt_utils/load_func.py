@@ -4,7 +4,7 @@ import torch, sys, os, time, glob
 Loop through all checkpoints in save_dir and attempt to load the latest one.
 """
 
-def latest_checkpoint_load(save_dir):
+def latest_checkpoint_load(save_dir, gpu=None):
     checkpoints = glob.glob(os.path.join(save_dir, '*.pth'))
     while checkpoints != []:
         # find latest checkpoint
@@ -14,7 +14,12 @@ def latest_checkpoint_load(save_dir):
         checkpoint_location = checkpoints[last_modified_index]
         try:
             # try to load the latest checkpoint and return it
-            checkpoint = torch.load(checkpoint_location)
+            if gpu is None:
+                checkpoint = torch.load(checkpoint_location)
+            else:
+                # Map model to be loaded to specified single gpu.
+                loc = 'cuda:{}'.format(gpu)
+                checkpoint = torch.load(checkpoint_location, map_location=loc)
             message = "\'Loaded checkpoint {}\'".format(checkpoint_location)
             os.system("echo " + message + " >> " + save_dir + "/output")
             return (checkpoint, checkpoint_location)
